@@ -1,0 +1,34 @@
+import appdaemon.plugins.hass.hassapi as hass
+
+m4_include(/home/appdaemon/code/appdaemon/adlib_imports.pyi)
+
+class scene_handler(hass.Hass):
+
+  def initialize(self):
+    # self.LOGLEVEL="DEBUG"
+    self.log("scene_handler App")
+    ADUtils=self.get_app("ADutils")
+    self.controllers={"zwave.guest_scene_selector":{"event":"zwave.scene_activated",
+                                                    "sensor":"sensor.guest_scene_selector",
+                                                    "callback":self.selector_callback,
+                                                    "button":{1:{"service":"cover/open_cover","entity":"cover.single_car"},
+                                                              2:{"service":"cover/close_cover","entity":"cover.single_car"},
+                                                              3:{"service":"switch/toggle","entity":"switch.garage_lights_switch"}}}}
+
+    for dev in self.controllers:
+      self.log("setting state for {} to ?".format(self.controllers[dev]["sensor"]))
+      self.set_state(self.controllers[dev]["sensor"],state="OK")
+      self.log("listening for {} event to run {} callback on device {}".format(self.controllers[dev]["event"],self.controllers[dev]["callback"],self.controllers[dev]["sensor"]))
+      #self.listen_event(self.selector_callback, "zwave.scene_activated")
+      self.listen_event(self.controllers[dev]["callback"],self.controllers[dev]["event"])
+      #self.listen_event(self.scene_change, "zwave.scene_activated")
+    self.log("initialization complete")
+
+  def selector_callback(self,e,d,kwargs):
+    self.log("in selector_callback")
+    self.log("event={}, data={}, kwarg={}".format(e,d,kwargs))
+    self.log("setting {} state to {}".format(self.controllers[d["entity_id"]]["sensor"],d["scene_id"]))
+    self.set_state(self.controllers[d["entity_id"]]["sensor"],state=d["scene_id"])
+    self.call_service(self.controllers[d["entity_id"]]["button"][d["scene_id"]]["service"],entity_id=self.controllers[d["entity_id"]]["button"][d["scene_id"]]["entity"])
+
+m4_include(/home/appdaemon/code/appdaemon/adlib.pyi)
