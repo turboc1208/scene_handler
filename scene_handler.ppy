@@ -1,3 +1,15 @@
+#######
+#
+#  controllers structure
+#  {"zwave.device":{"event":"zwave.event_to_listen_for",
+#                    "sensor":"depricated",
+#                    "callback":self.callback_function_to_process_this_controllers_events"
+#                    "button":{1:[ list of service/entity dictionaries to perform when button is pressed ]},
+#                              2:[{"service":"switch/turn_on","entity":"switch.garage_light"}],
+#                              3:[{"service":"switch/turn_on","entity":"switch.outdoor_lights"},
+#                                 {"service":"switch/turn_off","entity":"switch.kitchen_lights"}]},
+#    "zwave.next device":{"and so on and so on"}}
+#######
 import appdaemon.plugins.hass.hassapi as hass
 
 m4_include(/home/appdaemon/code/appdaemon/adlib_imports.pyi)
@@ -8,27 +20,65 @@ class scene_handler(hass.Hass):
     # self.LOGLEVEL="DEBUG"
     self.log("scene_handler App")
     ADUtils=self.get_app("ADutils")
-    self.controllers={"zwave.guest_scene_selector":{"event":"zwave.scene_activated",
-                                                    "sensor":"sensor.guest_scene_selector",
-                                                    "callback":self.selector_callback,
-                                                    "button":{1:{"service":"cover/open_cover","entity":"cover.single_car"},
-                                                              2:{"service":"cover/close_cover","entity":"cover.single_car"},
-                                                              3:{"service":"switch/toggle","entity":"switch.garage_lights_switch"}}}}
 
+    if "controllers" in self.args:
+      self.controllers=eval(self.args["controllers"])
+    else:
+      self.log("Error controllers must be specified in apps.yaml app section")
+
+    # loop through controllers and setup listeners for zwave events.
     for dev in self.controllers:
-      self.log("setting state for {} to ?".format(self.controllers[dev]["sensor"]))
-      self.set_state(self.controllers[dev]["sensor"],state="OK")
       self.log("listening for {} event to run {} callback on device {}".format(self.controllers[dev]["event"],self.controllers[dev]["callback"],self.controllers[dev]["sensor"]))
-      #self.listen_event(self.selector_callback, "zwave.scene_activated")
       self.listen_event(self.controllers[dev]["callback"],self.controllers[dev]["event"])
-      #self.listen_event(self.scene_change, "zwave.scene_activated")
     self.log("initialization complete")
 
+  # callback for scenes
   def selector_callback(self,e,d,kwargs):
-    self.log("in selector_callback")
-    self.log("event={}, data={}, kwarg={}".format(e,d,kwargs))
-    self.log("setting {} state to {}".format(self.controllers[d["entity_id"]]["sensor"],d["scene_id"]))
-    self.set_state(self.controllers[d["entity_id"]]["sensor"],state=d["scene_id"])
-    self.call_service(self.controllers[d["entity_id"]]["button"][d["scene_id"]]["service"],entity_id=self.controllers[d["entity_id"]]["button"][d["scene_id"]]["entity"])
+    # get entity id from data passed into callback
+    entityid=d["entity_id"]
+    
+    # is this an entity we know about
+    if entityid in self.controllers:
+       # ok lets seee which button was pressed
+       button=d["scene_id"]
+    
+       # is this a button we have configured
+       if button in self.controllers[entityid]["button"]:
 
+         # loop through each service/entity dictionary for our button
+         for a in self.controllers[entityid]["button"][button]:
+           # action entity is the entity we are going to turn on or off, not the zwave entity associated to the scene controller
+           actionentity=a["entity"]
+           service=a["service"]
+           etyp,enam=self.split_entity(actionentity)
+           
+           # Lights and switches are straight forward, covers on the other hand are different 
+           # checking actionentity type to decide what to do 
+           if etyp in ["light","switch"]:
+             self.log("setting {} state to {}".format(actionentity,service))
+             self.call_service(service,entity_id=actionentity)
+
+           elif etyp in ["cover"]:
+             # what we do with a cover depends on it's current state and 
+             # we want the button to act like a toggle 
+             # but covers don't have a toggle service
+             cstate=self.get_state(actionentity)
+ 
+             # if cover is open, close it, if it's closed, open it, if it's somewhere in between try to stop it.
+             if cstate=="open":
+               service="cover/close_cover"
+             elif cstate=="closed":
+               service="cover/open_cover"
+             else:
+               service="cover/stop_cover"
+
+             self.log("calling {} for {}".format(service,actionentity))
+             self.call_service(service,entity_id=actionentity)
+           else:
+             self.log("dont know what a {} is so trusting you do and setting {} to state {}".format(etyp,actionentity,service))
+             self.call_service(service,entity_id=actionentity)
+       else:
+         self.log("button {} for entity_id {} not defined in controllers".format(button,entityid))
+    else:
+      self.log("entity_id {} not defined in controllers".format(entityid))
 m4_include(/home/appdaemon/code/appdaemon/adlib.pyi)
